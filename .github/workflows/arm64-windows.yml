@@ -1,4 +1,4 @@
-name: test build deploy
+name: Test Win/aarch64
 
 on:
   # push:
@@ -13,11 +13,11 @@ env:
 jobs:
   install-depdendencies:
     name: Install package dependencies
-    runs-on: ubuntu-22.04
+    runs-on: windows-2022
     
     steps:
       - name: checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -29,136 +29,25 @@ jobs:
         
       - name: Cache Dependencies
         id: cache-deps
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/R-lib
-          key: R_lib-ARM64-${{ hashFiles('**/DESCRIPTION') }}
+          key: R_lib-Win-ARM64-${{ hashFiles('**/DESCRIPTION') }}
           restore-keys: |
             R_lib-ARM64-${{ hashFiles('**/DESCRIPTION') }}
             R_lib-ARM64-
             
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+      - name: Setup R and Bioconductor
+        uses: grimbough/bioc-actions/setup-bioc@v1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GRCH_TOKEN }}
-      
-      - name: Run the build process with Docker
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ghcr.io/grimbough/bioc-with-tinytex:devel-arm64
-          options: |
-            --platform linux/arm64
-            -v ${{ runner.temp }}/R-lib:/R-lib
-            -v ${{ github.workspace }}/../:/build
-            --env R_LIBS_USER=/R-lib
-            --env PKG=${{ env.PKG }}
-          run: |
-            uname -a
-            echo "options(Ncpus=4L, timeout = 300)" >> ~/.Rprofile
-            Rscript -e "library(remotes)" -e "dev_package_deps('/build/${PKG}', dependencies = TRUE) |> update(upgrade = 'always')"
-            
-  check-arm64:
-    name: Test package on ARM64
-    runs-on: ubuntu-22.04
-    needs:   install-depdendencies
-    steps:
-
-      - name: checkout
-        uses: actions/checkout@v3
-
-      - name: Make R library
-        run: mkdir -p ${RUNNER_TEMP}/R-lib
-        
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
-        with:
-          platforms: arm64
-
-      - name: Cache Dependencies
-        id: cache-deps
-        uses: actions/cache@v3
-        with:
-          path: ${{ runner.temp }}/R-lib
-          key: R_lib-ARM64-${{ hashFiles('**/DESCRIPTION') }}
-          restore-keys: |
-            R_lib-ARM64-${{ hashFiles('**/DESCRIPTION') }}
-            R_lib-ARM64-
-
-      - name: R CMD INSTALL
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ghcr.io/grimbough/bioc-with-tinytex:devel-arm64
-          options: |
-            --platform linux/arm64
-            -v ${{ runner.temp }}/R-lib:/R-lib
-            -v ${{ github.workspace }}/../:/build
-            --env R_LIBS_USER=/R-lib
-            --env PKG=${{ env.PKG }}
-            --workdir /build
-          run: |
-            ls -l
-            R CMD INSTALL ${PKG} &> ${PKG}.install-out.txt 
-            ls -l
-          shell: bash
-
-      - name: R CMD build
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ghcr.io/grimbough/bioc-with-tinytex:devel-arm64
-          options: |
-            --platform linux/arm64
-            -v ${{ runner.temp }}/R-lib:/R-lib
-            -v ${{ github.workspace }}/../:/build
-            --env R_LIBS_USER=/R-lib
-            --env PKG=${{ env.PKG }}
-            --workdir /build
-          run: |
-            ls -l "${R_LIBS_USER}"
-            R CMD build --keep-empty-dirs --no-resave-data ${PKG}
-            ls -l
-
-      - name: R CMD check
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ghcr.io/grimbough/bioc-with-tinytex:devel-arm64
-          options: |
-            --platform linux/arm64
-            -v ${{ runner.temp }}/R-lib:/R-lib
-            -v ${{ github.workspace }}/../:/build
-            --env R_LIBS_USER=/R-lib
-            --env PKG=${{ env.PKG }}
-            --workdir /build
-          run: |
-            ls -l
-            R CMD check --install=check:${PKG}.install-out.txt --library="${R_LIBS_USER}" --no-vignettes --timings ${PKG}*.tar.gz
-            cat ${PKG}.install-out.txt
-            ls -l
-
-      - name: Build Package Binary
-        uses: addnab/docker-run-action@v3
-        with:
-          image: ghcr.io/grimbough/bioc-with-tinytex:devel-arm64
-          options: |
-            --platform linux/arm64
-            -v ${{ runner.temp }}/R-lib:/R-lib
-            -v ${{ github.workspace }}/../:/build
-            --env R_LIBS_USER=/R-lib
-            --env PKG=${{ env.PKG }}
-            --workdir /build
-          run: |
-            mkdir -p ${PKG}.buildbin-libdir
-            R CMD INSTALL --build --library=${PKG}.buildbin-libdir ${PKG}*.tar.gz
-            ls -l
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: my-artifact
-          path: |
-            ~/**/*.tar.gz
-            ~/**/*.install-out.txt
-            ~/**/*.Rcheck
-          if-no-files-found: warn
+          bioc-version: ${{ matrix.config.bioc-version }}
+          bioc-mirror: https://ftp.gwdg.de/pub/misc/bioconductor
+          Ncpus: 4
           
+      - name: Install dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+      
+      - name: Bioc - Build, Install, Check
+        id: build-install-check
+        uses: grimbough/bioc-actions/build-install-check@v1
+
